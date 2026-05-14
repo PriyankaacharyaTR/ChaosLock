@@ -291,22 +291,91 @@ elif page == "📝 Text Encryption":
         st.json(payload)
 
         st.markdown("---")
-        st.markdown("### Step 3 — Decrypt")
-        if st.button("🔓 DECRYPT"):
-            with st.spinner("Decrypting …"):
-                recovered = decrypt_text(payload, PRIVATE_KEY)
-                st.session_state.text_recovered = recovered
-            st.success("✅ Decryption successful!")
+        st.markdown("### Step 3 — Download Payload + Key")
+        st.caption(
+            "To make decryption feel more realistic, download the encrypted payload and the RSA private key. "
+            "Then upload them below to decrypt."
+        )
 
-        if "text_recovered" in st.session_state:
+        payload_json_bytes = payload_to_json(payload).encode("utf-8")
+        suggested_payload_name = "encrypted_text_payload.json"
+        if payload.get("created_at"):
+            ts = payload["created_at"].replace(":", "-").replace("Z", "")
+            suggested_payload_name = f"encrypted_text_payload_{ts}.json"
+
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button(
+                "⬇️ Download encrypted payload (.json)",
+                data=payload_json_bytes,
+                file_name=suggested_payload_name,
+                mime="application/json",
+                key="download_text_payload_json",
+            )
+        with d2:
+            priv_pem_for_text, _pub_pem_for_text = export_keys(PRIVATE_KEY, PUBLIC_KEY)
+            st.download_button(
+                "⬇️ Download RSA private key (.pem)",
+                data=priv_pem_for_text,
+                file_name="private_key.pem",
+                mime="application/x-pem-file",
+                key="download_text_private_key_pem",
+            )
+
+        st.markdown("---")
+        st.markdown("### Step 4 — Decrypt by Uploading Files")
+        st.caption("Upload the payload JSON and the matching RSA private key PEM to recover the original message.")
+
+        up_payload = st.file_uploader(
+            "Upload encrypted payload (JSON)",
+            type=["json"],
+            key="text_payload_upload",
+        )
+        up_priv = st.file_uploader(
+            "Upload RSA private key (PEM)",
+            type=["pem", "key"],
+            key="text_private_key_upload",
+        )
+
+        uploaded_payload = None
+        if up_payload is not None:
+            try:
+                uploaded_payload = json.loads(up_payload.getvalue().decode("utf-8"))
+                required = {"iv_b64", "ciphertext_b64", "enc_aes_key_b64", "chaos_r", "chaos_x0"}
+                missing = sorted(required.difference(uploaded_payload.keys()))
+                if missing:
+                    st.error(f"Invalid payload file — missing keys: {', '.join(missing)}")
+                    uploaded_payload = None
+            except Exception as e:
+                st.error(f"Could not read JSON payload: {e}")
+
+        uploaded_priv = None
+        if up_priv is not None:
+            try:
+                uploaded_priv = RSA.import_key(up_priv.getvalue())
+            except Exception as e:
+                st.error(f"Invalid private key file: {e}")
+
+        can_decrypt = uploaded_payload is not None and uploaded_priv is not None
+        if st.button("🔓 DECRYPT (from uploads)", disabled=not can_decrypt, key="decrypt_text_from_uploads"):
+            with st.spinner("Decrypting uploaded payload …"):
+                try:
+                    recovered = decrypt_text(uploaded_payload, uploaded_priv)
+                    st.session_state.text_recovered_uploaded = recovered
+                    st.success("✅ Decryption successful!")
+                except Exception as e:
+                    st.error(f"Decryption failed: {e}")
+
+        if "text_recovered_uploaded" in st.session_state:
             st.markdown("**Recovered message:**")
-            st.info(st.session_state.text_recovered)
+            st.info(st.session_state.text_recovered_uploaded)
 
-            match = st.session_state.text_recovered == st.session_state.text_original
-            if match:
-                st.success("✅ Original and recovered messages **match perfectly**.")
-            else:
-                st.error("❌ Mismatch detected.")
+            if "text_original" in st.session_state:
+                match = st.session_state.text_recovered_uploaded == st.session_state.text_original
+                if match:
+                    st.success("✅ Original and recovered messages match.")
+                else:
+                    st.warning("Recovered text doesn't match the last message encrypted in this session.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
